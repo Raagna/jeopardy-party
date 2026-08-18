@@ -10,7 +10,7 @@ import './final.css'
 import './end.css'
 import './mobile.css'
 
-const SERVER = `${location.protocol}//${location.hostname}:3001`
+const SERVER = import.meta.env.VITE_SERVER_URL || `${location.protocol}//${location.hostname}:3001`
 const socket = io(SERVER, { autoConnect: true })
 const byCategory = (questions) => Object.entries(questions.filter(q=>q.round !== 'Final Jeopardy!').reduce((a,q) => { const key=`${q.category}|${q.airDate || 'undated'}|${q.round || 'Jeopardy!'}`; (a[key] ||= []).push(q); return a }, {})).filter(([,q]) => q.length >= 5).sort((a,b)=>(b[1][0].airDate || '').localeCompare(a[1][0].airDate || ''))
 const categoryTitle = (entry) => entry[1][0].category
