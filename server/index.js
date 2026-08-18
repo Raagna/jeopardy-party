@@ -58,7 +58,18 @@ io.on('connection', (socket) => {
     }
     if (action === 'buzzer') { game.buzzerOpen = !!payload.open; if (payload.open) game.buzzedPlayer = null }
     if (action === 'reveal') game.reveal = !game.reveal
-    if (action === 'score') { const p = game.players.get(payload.playerId); if (p) p.score += Number(payload.amount) || 0 }
+    if (action === 'score') {
+      const p = game.players.get(payload.playerId); const amount = Number(payload.amount) || 0
+      if (p) p.score += amount
+      // A correct regular-clue ruling immediately awards control and returns to the board.
+      if (p && amount > 0 && game.status === 'playing' && game.activeQuestion && !game.activeQuestion.final) {
+        const category = game.boards[game.boardIndex]?.[game.activeQuestion.categoryIndex]
+        const question = category?.questions?.[game.activeQuestion.questionIndex]
+        if (question) question.used = true
+        game.turnPlayerId = p.id; game.answeringPlayerId = null; game.activeQuestion = null
+        game.buzzerOpen = false; game.buzzedPlayer = null; game.reveal = false
+      }
+    }
     if (action === 'close') {
       if (game.activeQuestion && !game.activeQuestion.final) {
         const category = game.boards[game.boardIndex]?.[game.activeQuestion.categoryIndex]
@@ -84,7 +95,7 @@ io.on('connection', (socket) => {
     emitGame(game)
   })
   socket.on('player:buzz', ({ code, playerId }) => {
-    const game = games.get(code); if (!game || !game.buzzerOpen || game.buzzedPlayer || !game.players.has(playerId)) return
+    const game = games.get(code); if (!game || (!game.buzzerOpen && game.answeringPlayerId !== playerId) || game.buzzedPlayer || !game.players.has(playerId)) return
     game.buzzedPlayer = playerId; game.answeringPlayerId = playerId; game.buzzerOpen = false; emitGame(game)
   })
   socket.on('player:pass', ({ code, playerId }) => {
