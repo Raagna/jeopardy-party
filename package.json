@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "concurrently \"vite --host 0.0.0.0\" \"node server/index.js\"",
     "client": "vite --host 0.0.0.0",
-    "server": "node server/index.js"
+    "server": "node server/index.js",
+    "build": "vite build"
   },
   "dependencies": {
     "cors": "^2.8.5",
