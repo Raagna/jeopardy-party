@@ -36,13 +36,13 @@ const byCategory = (questions) =>
       (b[1][0].airDate || "").localeCompare(a[1][0].airDate || ""),
     );
 const categoryTitle = (entry) => entry[1][0].category;
-const makeCategory = ([, qs]) => ({
+const makeCategory = ([, qs], boardIndex) => ({
   name: qs[0].category,
   airDate: qs[0].airDate,
   questions: [...qs]
     .sort((a, b) => (a.value || 0) - (b.value || 0))
     .slice(0, 5)
-    .map((q, i) => ({ ...q, value: q.value || (i + 1) * 200 })),
+    .map((q, i) => ({ ...q, value: (i + 1) * (boardIndex === 0 ? 200 : 400) })),
 });
 const uid = () => Math.random().toString(36).slice(2);
 
@@ -71,10 +71,11 @@ function Setup({ onCreate }) {
     () =>
       allCategories.filter(
         ([, qs]) =>
+          qs[0].round === (board === 0 ? "Jeopardy!" : "Double Jeopardy!") &&
           (openYear === "All dates" || qs[0].airDate?.startsWith(openYear)) &&
           qs[0].category.includes(search.toUpperCase()),
       ),
-    [allCategories, openYear, search],
+    [allCategories, openYear, search, board],
   );
   const select = (entry) =>
     setPicked((p) =>
@@ -113,7 +114,7 @@ function Setup({ onCreate }) {
       final ||
       finalPool[Math.floor(Math.random() * finalPool.length)] ||
       questions[Math.floor(Math.random() * questions.length)];
-    onCreate({ boards: picked.map((b) => b.map(makeCategory)), final: finalQ });
+    onCreate({ boards: picked.map((b, boardIndex) => b.map((entry) => makeCategory(entry, boardIndex))), final: finalQ });
   };
   return (
     <main className="setup">
