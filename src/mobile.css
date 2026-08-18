@@ -1,22 +1,33 @@
 @media (max-width: 600px) {
-  .controller { padding: 20px 14px 96px; }
-  .controller h1 { font-size: 1.45rem; }
-  .wide, .close, .skip-controller { min-height: 54px; font-size: 1rem; }
-  .judgement { padding: 12px; }
+  .controller { padding: 16px 14px 28px; }
+  .controller h1 { font-size: 1.7rem; }
+  .controller .eyebrow { font-size: .8rem; }
+  .wide, .close, .skip-controller { min-height: 56px; font-size: 1.08rem; margin: 9px 0; }
+  .judgement { padding: 14px; margin: 10px 0; }
+  .judgement h2 { font-size: 1.25rem; }
+  .judgement p { font-size: 1rem; }
   .judgement div { flex-wrap: wrap; }
   .judgement div button { min-height: 48px; min-width: calc(50% - 4px); }
   .final-response { overflow-wrap: anywhere; line-height: 1.45; }
-  .player { padding: 26px 18px calc(32px + env(safe-area-inset-bottom)); }
-  .player .brand { font-size: 1.7rem; }
-  .player-score { font-size: 3rem; }
-  .buzzer { width: min(72vw, 260px); height: min(72vw, 260px); margin-top: 20px; touch-action: manipulation; }
-  .final-form input, .final-form textarea { font-size: 16px; }
-  .final-form .primary { min-height: 52px; }
+  .player { padding: 20px 18px calc(20px + env(safe-area-inset-bottom)); }
+  .player .brand { font-size: 2rem; }
+  .player h2 { margin: 28px 0 8px; font-size: 1.45rem; }
+  .player-score { font-size: 3.7rem; }
+  .player-status { font-size: 1.1rem; margin: 18px 0 6px; }
+  .buzzer { width: min(78vw, 300px); height: min(78vw, 300px); margin-top: 10px; font-size: 2.6rem; touch-action: manipulation; }
+  .final-form { margin-top: 16px; gap: 10px; }
+  .final-form p { font-size: 1.05rem; margin: 0; }
+  .final-form input, .final-form textarea { font-size: 17px; padding: 14px; }
+  .final-form .primary { min-height: 56px; font-size: 1.05rem; }
   .locked-final { line-height: 1.45; }
-  .display { padding: 12px; }
+  .display { padding: 12px 10px; }
   .display header { gap: 8px; }
-  .display .brand { font-size: 1.5rem; }
-  .code { font-size: .68rem; text-align:right; }
+  .display .brand { font-size: 1.65rem; }
+  .code { font-size: .76rem; text-align:right; }
+  .waiting { margin: 4vh auto; }
+  .waiting h1 { font-size: 2.75rem; }
+  .lobby-code { font-size: 3.4rem; }
+  .scores div { min-width: 120px; padding: 9px 12px; font-size: 1rem; }
 }
 
 @media (min-width: 601px) and (max-width: 900px) {
