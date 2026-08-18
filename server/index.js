@@ -17,7 +17,7 @@ function publicGame(game) {
     buzzerOpen: game.buzzerOpen, buzzedPlayer: game.buzzedPlayer,
     activeQuestion: game.activeQuestion, reveal: game.reveal, hostConnected: !!game.hostSocketId,
     finalResponses: [...game.finalResponses.entries()].map(([playerId, response]) => ({ playerId, ...response })),
-    turnPlayerId: game.turnPlayerId, answeringPlayerId: game.answeringPlayerId
+    turnPlayerId: game.turnPlayerId, answeringPlayerId: game.answeringPlayerId, incorrectPlayerIds: game.incorrectPlayerIds
   }
 }
 function emitGame(game) { io.to(game.code).emit('game:update', publicGame(game)) }
@@ -27,7 +27,7 @@ function makeGame(code, config) {
     config: clone(config),
     boards: config.boards.map((board) => board.map((category) => ({ ...category, questions: category.questions.map((q, i) => ({ ...q, value: q.value || (i + 1) * 200, used: false })) }))),
     boardIndex: 0,
-    final: config.final, buzzerOpen: false, buzzedPlayer: null, activeQuestion: null, reveal: false, finalResponses: new Map(), turnPlayerId: null, answeringPlayerId: null
+    final: config.final, buzzerOpen: false, buzzedPlayer: null, activeQuestion: null, reveal: false, finalResponses: new Map(), turnPlayerId: null, answeringPlayerId: null, incorrectPlayerIds: []
   }
 }
 
@@ -54,7 +54,7 @@ io.on('connection', (socket) => {
     if (action === 'start') { game.status = 'playing'; const players=[...game.players.keys()]; game.turnPlayerId=players[Math.floor(Math.random()*players.length)] || null }
     if (action === 'select') {
       const { categoryIndex, questionIndex } = payload; const q = game.boards[game.boardIndex][categoryIndex]?.questions[questionIndex]
-      if (q && !q.used) { game.activeQuestion = { categoryIndex, questionIndex, question: clone(q) }; game.buzzedPlayer = null; game.answeringPlayerId = game.turnPlayerId; game.buzzerOpen = false; game.reveal = false }
+      if (q && !q.used) { game.activeQuestion = { categoryIndex, questionIndex, question: clone(q), canPass: true }; game.buzzedPlayer = null; game.answeringPlayerId = game.turnPlayerId; game.incorrectPlayerIds=[]; game.buzzerOpen = false; game.reveal = false }
     }
     if (action === 'buzzer') { game.buzzerOpen = !!payload.open; if (payload.open) game.buzzedPlayer = null }
     if (action === 'reveal') game.reveal = !game.reveal
@@ -67,7 +67,10 @@ io.on('connection', (socket) => {
         const question = category?.questions?.[game.activeQuestion.questionIndex]
         if (question) question.used = true
         game.turnPlayerId = p.id; game.answeringPlayerId = null; game.activeQuestion = null
-        game.buzzerOpen = false; game.buzzedPlayer = null; game.reveal = false
+        game.buzzerOpen = false; game.buzzedPlayer = null; game.incorrectPlayerIds=[]; game.reveal = false
+      } else if (p && amount < 0 && game.status === 'playing' && game.activeQuestion && !game.activeQuestion.final) {
+        if (!game.incorrectPlayerIds.includes(p.id)) game.incorrectPlayerIds.push(p.id)
+        game.answeringPlayerId=null; game.buzzedPlayer=null; game.buzzerOpen=true
       }
     }
     if (action === 'close') {
@@ -95,11 +98,11 @@ io.on('connection', (socket) => {
     emitGame(game)
   })
   socket.on('player:buzz', ({ code, playerId }) => {
-    const game = games.get(code); if (!game || (!game.buzzerOpen && game.answeringPlayerId !== playerId) || game.buzzedPlayer || !game.players.has(playerId)) return
-    game.buzzedPlayer = playerId; game.answeringPlayerId = playerId; game.buzzerOpen = false; emitGame(game)
+    const game = games.get(code); if (!game || (!game.buzzerOpen && game.answeringPlayerId !== playerId) || game.buzzedPlayer || !game.players.has(playerId) || game.incorrectPlayerIds.includes(playerId)) return
+    game.buzzedPlayer = playerId; game.answeringPlayerId = playerId; if(game.activeQuestion) game.activeQuestion.canPass=false; game.buzzerOpen = false; emitGame(game)
   })
   socket.on('player:pass', ({ code, playerId }) => {
-    const game=games.get(code); if(!game || !game.activeQuestion || game.answeringPlayerId!==playerId) return
+    const game=games.get(code); if(!game || !game.activeQuestion || !game.activeQuestion.canPass || game.answeringPlayerId!==playerId) return
     game.answeringPlayerId=null; game.buzzedPlayer=null; game.buzzerOpen=true; emitGame(game)
   })
   socket.on('player:finalSubmit', ({ code, playerId, wager, response }, ack) => {
