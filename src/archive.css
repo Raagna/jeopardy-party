@@ -1,0 +1,5 @@
+.archive-controls { display:flex; gap:8px; }
+.archive-controls select { width:150px; }
+.randomize { margin-left:auto; background:#e6ecff; color:#172a80; padding:8px 11px; border-radius:8px; font-weight:700; }
+.load-more { grid-column:1/-1; text-align:center; color:#65709b; padding:10px; font-size:.85rem; }
+@media(max-width:700px){.archive-controls{flex-direction:column}.archive-controls select{width:100%}.randomize{margin-left:0}}

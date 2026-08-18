@@ -1,0 +1,25 @@
+@media (max-width: 600px) {
+  .controller { padding: 20px 14px 96px; }
+  .controller h1 { font-size: 1.45rem; }
+  .wide, .close, .skip-controller { min-height: 54px; font-size: 1rem; }
+  .judgement { padding: 12px; }
+  .judgement div { flex-wrap: wrap; }
+  .judgement div button { min-height: 48px; min-width: calc(50% - 4px); }
+  .final-response { overflow-wrap: anywhere; line-height: 1.45; }
+  .player { padding: 26px 18px calc(32px + env(safe-area-inset-bottom)); }
+  .player .brand { font-size: 1.7rem; }
+  .player-score { font-size: 3rem; }
+  .buzzer { width: min(72vw, 260px); height: min(72vw, 260px); margin-top: 20px; touch-action: manipulation; }
+  .final-form input, .final-form textarea { font-size: 16px; }
+  .final-form .primary { min-height: 52px; }
+  .locked-final { line-height: 1.45; }
+  .display { padding: 12px; }
+  .display header { gap: 8px; }
+  .display .brand { font-size: 1.5rem; }
+  .code { font-size: .68rem; text-align:right; }
+}
+
+@media (min-width: 601px) and (max-width: 900px) {
+  .controller { padding-bottom: 80px; }
+  .buzzer { width: 220px; height: 220px; }
+}

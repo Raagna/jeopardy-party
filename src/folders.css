@@ -1,0 +1,23 @@
+.folder-bar {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 10px 0 2px;
+}
+
+.folder-bar button {
+  white-space: nowrap;
+  border: 1px solid #d5dbf0;
+  background: #fff;
+  color: #41518b;
+  padding: 7px 9px;
+  border-radius: 7px;
+  font-weight: 700;
+  font-size: .8rem;
+}
+
+.folder-bar .open-folder {
+  background: #172a80;
+  color: #fff;
+  border-color: #172a80;
+}
