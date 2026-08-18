@@ -36,6 +36,11 @@ const byCategory = (questions) =>
       (b[1][0].airDate || "").localeCompare(a[1][0].airDate || ""),
     );
 const categoryTitle = (entry) => entry[1][0].category;
+const hasBoardValues = (questions, boardIndex) => {
+  const step = boardIndex === 0 ? 200 : 400;
+  const values = new Set(questions.map((q) => q.value));
+  return [1, 2, 3, 4, 5].every((multiplier) => values.has(multiplier * step));
+};
 const makeCategory = ([, qs], boardIndex) => ({
   name: qs[0].category,
   airDate: qs[0].airDate,
@@ -72,6 +77,7 @@ function Setup({ onCreate }) {
       allCategories.filter(
         ([, qs]) =>
           qs[0].round === (board === 0 ? "Jeopardy!" : "Double Jeopardy!") &&
+          hasBoardValues(qs, board) &&
           (openYear === "All dates" || qs[0].airDate?.startsWith(openYear)) &&
           qs[0].category.includes(search.toUpperCase()),
       ),
