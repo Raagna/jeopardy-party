@@ -70,7 +70,7 @@ io.on('connection', (socket) => {
         game.buzzerOpen = false; game.buzzedPlayer = null; game.incorrectPlayerIds=[]; game.reveal = false
       } else if (p && amount < 0 && game.status === 'playing' && game.activeQuestion && !game.activeQuestion.final) {
         if (!game.incorrectPlayerIds.includes(p.id)) game.incorrectPlayerIds.push(p.id)
-        game.answeringPlayerId=null; game.buzzedPlayer=null; game.buzzerOpen=false
+        game.answeringPlayerId=null; game.buzzedPlayer=null; game.buzzerOpen=true
         if (game.incorrectPlayerIds.length >= game.players.size) game.reveal=true
       }
     }
@@ -104,7 +104,7 @@ io.on('connection', (socket) => {
   })
   socket.on('player:pass', ({ code, playerId }) => {
     const game=games.get(code); if(!game || !game.activeQuestion || !game.activeQuestion.canPass || game.answeringPlayerId!==playerId) return
-    game.answeringPlayerId=null; game.buzzedPlayer=null; game.buzzerOpen=false; emitGame(game)
+    game.answeringPlayerId=null; game.buzzedPlayer=null; game.buzzerOpen=true; emitGame(game)
   })
   socket.on('player:finalSubmit', ({ code, playerId, wager, response }, ack) => {
     const game = games.get(code); const player = game?.players.get(playerId)
