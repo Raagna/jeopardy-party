@@ -16,7 +16,8 @@ function publicGame(game) {
     players: [...game.players.values()].map(({ socketId, ...player }) => player),
     buzzerOpen: game.buzzerOpen, buzzedPlayer: game.buzzedPlayer,
     activeQuestion: game.activeQuestion, reveal: game.reveal, hostConnected: !!game.hostSocketId,
-    finalResponses: [...game.finalResponses.entries()].map(([playerId, response]) => ({ playerId, ...response }))
+    finalResponses: [...game.finalResponses.entries()].map(([playerId, response]) => ({ playerId, ...response })),
+    turnPlayerId: game.turnPlayerId, answeringPlayerId: game.answeringPlayerId
   }
 }
 function emitGame(game) { io.to(game.code).emit('game:update', publicGame(game)) }
@@ -26,7 +27,7 @@ function makeGame(code, config) {
     config: clone(config),
     boards: config.boards.map((board) => board.map((category) => ({ ...category, questions: category.questions.map((q, i) => ({ ...q, value: q.value || (i + 1) * 200, used: false })) }))),
     boardIndex: 0,
-    final: config.final, buzzerOpen: false, buzzedPlayer: null, activeQuestion: null, reveal: false, finalResponses: new Map()
+    final: config.final, buzzerOpen: false, buzzedPlayer: null, activeQuestion: null, reveal: false, finalResponses: new Map(), turnPlayerId: null, answeringPlayerId: null
   }
 }
 
@@ -50,10 +51,10 @@ io.on('connection', (socket) => {
   })
   socket.on('host:action', ({ code, action, payload }) => {
     const game = games.get(code); if (!game || (game.hostSocketId !== socket.id && socket.data.controllerGame !== code)) return
-    if (action === 'start') game.status = 'playing'
+    if (action === 'start') { game.status = 'playing'; const players=[...game.players.keys()]; game.turnPlayerId=players[Math.floor(Math.random()*players.length)] || null }
     if (action === 'select') {
       const { categoryIndex, questionIndex } = payload; const q = game.boards[game.boardIndex][categoryIndex]?.questions[questionIndex]
-      if (q && !q.used) { game.activeQuestion = { categoryIndex, questionIndex, question: clone(q) }; game.buzzedPlayer = null; game.buzzerOpen = false; game.reveal = false }
+      if (q && !q.used) { game.activeQuestion = { categoryIndex, questionIndex, question: clone(q) }; game.buzzedPlayer = null; game.answeringPlayerId = game.turnPlayerId; game.buzzerOpen = false; game.reveal = false }
     }
     if (action === 'buzzer') { game.buzzerOpen = !!payload.open; if (payload.open) game.buzzedPlayer = null }
     if (action === 'reveal') game.reveal = !game.reveal
@@ -64,12 +65,13 @@ io.on('connection', (socket) => {
         const question = category?.questions?.[game.activeQuestion.questionIndex]
         if (question) question.used = true
       }
-      game.activeQuestion = null; game.buzzerOpen = false; game.buzzedPlayer = null; game.reveal = false
+      game.activeQuestion = null; game.buzzerOpen = false; game.buzzedPlayer = null; game.answeringPlayerId = null; game.reveal = false
       if (game.status === 'final') game.status = 'complete'
     }
     if (action === 'final') { game.status = 'final'; game.activeQuestion = { final: true, question: clone(game.final) }; game.reveal = false; game.buzzerOpen = false }
     if (action === 'revealFinalPlayer') { const response = game.finalResponses.get(payload.playerId); if (response) response.revealed = !response.revealed }
     if (action === 'nextBoard') { game.boardIndex = 1; game.activeQuestion = null; game.buzzerOpen = false; game.buzzedPlayer = null; game.reveal = false }
+    if (action === 'timeout') { const players=[...game.players.values()]; if(players.length){const low=Math.min(...players.map(p=>p.score)); const choices=players.filter(p=>p.score===low); const next=choices[Math.floor(Math.random()*choices.length)]; game.turnPlayerId=next.id; game.answeringPlayerId=game.activeQuestion?next.id:null; game.buzzerOpen=false; game.buzzedPlayer=null} }
     if (action === 'replay') {
       const reset = makeGame(game.code, game.config)
       reset.hostSocketId = game.hostSocketId
@@ -83,7 +85,11 @@ io.on('connection', (socket) => {
   })
   socket.on('player:buzz', ({ code, playerId }) => {
     const game = games.get(code); if (!game || !game.buzzerOpen || game.buzzedPlayer || !game.players.has(playerId)) return
-    game.buzzedPlayer = playerId; game.buzzerOpen = false; emitGame(game)
+    game.buzzedPlayer = playerId; game.answeringPlayerId = playerId; game.buzzerOpen = false; emitGame(game)
+  })
+  socket.on('player:pass', ({ code, playerId }) => {
+    const game=games.get(code); if(!game || !game.activeQuestion || game.answeringPlayerId!==playerId) return
+    game.answeringPlayerId=null; game.buzzedPlayer=null; game.buzzerOpen=true; emitGame(game)
   })
   socket.on('player:finalSubmit', ({ code, playerId, wager, response }, ack) => {
     const game = games.get(code); const player = game?.players.get(playerId)
