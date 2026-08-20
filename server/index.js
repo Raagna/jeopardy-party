@@ -9,15 +9,30 @@ const games = new Map()
 
 const id = () => Math.random().toString(36).slice(2, 8).toUpperCase()
 const clone = (x) => JSON.parse(JSON.stringify(x))
+const connectedPlayers = (game) => [...game.players.values()].filter((player) => player.socketId)
+function assignLowestConnected(game) {
+  const players = connectedPlayers(game)
+  if (!players.length) return null
+  const low = Math.min(...players.map((player) => player.score))
+  const choices = players.filter((player) => player.score === low)
+  const player = choices[Math.floor(Math.random() * choices.length)]
+  game.turnPlayerId = player.id
+  game.answeringPlayerId = game.activeQuestion ? player.id : null
+  game.buzzedPlayer = null
+  game.buzzerOpen = false
+  if (game.activeQuestion) game.activeQuestion.canPass = true
+  return player
+}
 
 function publicGame(game) {
   return {
     code: game.code, status: game.status, board: game.boards[game.boardIndex], boardIndex: game.boardIndex, final: game.final,
-    players: [...game.players.values()].map(({ socketId, ...player }) => player),
+    players: [...game.players.values()].map(({ socketId, ...player }) => ({ ...player, connected: !!socketId })),
     buzzerOpen: game.buzzerOpen, buzzedPlayer: game.buzzedPlayer,
     activeQuestion: game.activeQuestion, reveal: game.reveal, hostConnected: !!game.hostSocketId,
     finalResponses: [...game.finalResponses.entries()].map(([playerId, response]) => ({ playerId, ...response })),
-    turnPlayerId: game.turnPlayerId, answeringPlayerId: game.answeringPlayerId, incorrectPlayerIds: game.incorrectPlayerIds
+    turnPlayerId: game.turnPlayerId, answeringPlayerId: game.answeringPlayerId, incorrectPlayerIds: game.incorrectPlayerIds,
+    clueDeadline: game.clueDeadline
   }
 }
 function emitGame(game) { io.to(game.code).emit('game:update', publicGame(game)) }
@@ -27,7 +42,7 @@ function makeGame(code, config) {
     config: clone(config),
     boards: config.boards.map((board) => board.map((category) => ({ ...category, questions: category.questions.map((q, i) => ({ ...q, value: q.value || (i + 1) * 200, used: false })) }))),
     boardIndex: 0,
-    final: config.final, buzzerOpen: false, buzzedPlayer: null, activeQuestion: null, reveal: false, finalResponses: new Map(), turnPlayerId: null, answeringPlayerId: null, incorrectPlayerIds: []
+    final: config.final, buzzerOpen: false, buzzedPlayer: null, activeQuestion: null, reveal: false, finalResponses: new Map(), turnPlayerId: null, answeringPlayerId: null, incorrectPlayerIds: [], clueDeadline: null
   }
 }
 
@@ -41,9 +56,16 @@ io.on('connection', (socket) => {
     const game = games.get(code?.toUpperCase()); if (!game) return ack?.({ ok: false, error: 'Game not found' })
     socket.data.controllerGame = game.code; socket.join(game.code); ack?.({ ok: true, game: publicGame(game) }); emitGame(game)
   })
-  socket.on('player:join', ({ code, name }, ack) => {
+  socket.on('player:join', ({ code, name, returningPlayerId }, ack) => {
     const game = games.get(code?.toUpperCase()); if (!game) return ack?.({ ok: false, error: 'Game not found' })
-    if (game.status !== 'lobby') return ack?.({ ok: false, error: 'This game has already started' })
+    const returning = game.players.get(returningPlayerId)
+    if (returning && !returning.socketId) {
+      returning.socketId = socket.id
+      socket.join(game.code); socket.data.game = game.code; socket.data.player = returning.id
+      ack?.({ ok: true, playerId: returning.id, game: publicGame(game), rejoined: true }); emitGame(game)
+      return
+    }
+    if (game.status !== 'lobby') return ack?.({ ok: false, error: 'This game has already started. Re-enter the room code on the device you used to join.' })
     const clean = String(name || '').trim().slice(0, 20); if (!clean) return ack?.({ ok: false, error: 'Enter a name' })
     const player = { id: id(), name: clean, score: 0, socketId: socket.id }
     game.players.set(player.id, player); socket.join(game.code); socket.data.game = game.code; socket.data.player = player.id
@@ -51,10 +73,10 @@ io.on('connection', (socket) => {
   })
   socket.on('host:action', ({ code, action, payload }) => {
     const game = games.get(code); if (!game || (game.hostSocketId !== socket.id && socket.data.controllerGame !== code)) return
-    if (action === 'start') { game.status = 'playing'; const players=[...game.players.keys()]; game.turnPlayerId=players[Math.floor(Math.random()*players.length)] || null }
+    if (action === 'start') { game.status = 'playing'; const players=connectedPlayers(game); game.turnPlayerId=players[Math.floor(Math.random()*players.length)]?.id || null }
     if (action === 'select') {
       const { categoryIndex, questionIndex } = payload; const q = game.boards[game.boardIndex][categoryIndex]?.questions[questionIndex]
-      if (q && !q.used) { game.activeQuestion = { categoryIndex, questionIndex, question: clone(q), canPass: true }; game.buzzedPlayer = null; game.answeringPlayerId = game.turnPlayerId; game.incorrectPlayerIds=[]; game.buzzerOpen = false; game.reveal = false }
+      if (q && !q.used) { game.activeQuestion = { categoryIndex, questionIndex, question: clone(q), canPass: true }; game.clueDeadline=Date.now()+30000; game.buzzedPlayer = null; game.answeringPlayerId = game.turnPlayerId; game.incorrectPlayerIds=[]; game.buzzerOpen = false; game.reveal = false }
     }
     if (action === 'buzzer') { game.buzzerOpen = !!payload.open; if (payload.open) game.buzzedPlayer = null }
     if (action === 'reveal') game.reveal = !game.reveal
@@ -66,12 +88,12 @@ io.on('connection', (socket) => {
         const category = game.boards[game.boardIndex]?.[game.activeQuestion.categoryIndex]
         const question = category?.questions?.[game.activeQuestion.questionIndex]
         if (question) question.used = true
-        game.turnPlayerId = p.id; game.answeringPlayerId = null; game.activeQuestion = null
+        game.turnPlayerId = p.id; game.answeringPlayerId = null; game.activeQuestion = null; game.clueDeadline=null
         game.buzzerOpen = false; game.buzzedPlayer = null; game.incorrectPlayerIds=[]; game.reveal = false
       } else if (p && amount < 0 && game.status === 'playing' && game.activeQuestion && !game.activeQuestion.final) {
         if (!game.incorrectPlayerIds.includes(p.id)) game.incorrectPlayerIds.push(p.id)
         game.answeringPlayerId=null; game.buzzedPlayer=null; game.buzzerOpen=true
-        if (game.incorrectPlayerIds.length >= game.players.size) game.reveal=true
+        if (game.incorrectPlayerIds.length >= connectedPlayers(game).length) game.reveal=true
       }
     }
     if (action === 'close') {
@@ -80,12 +102,12 @@ io.on('connection', (socket) => {
         const question = category?.questions?.[game.activeQuestion.questionIndex]
         if (question) question.used = true
       }
-      game.activeQuestion = null; game.buzzerOpen = false; game.buzzedPlayer = null; game.answeringPlayerId = null; game.reveal = false
+      game.activeQuestion = null; game.clueDeadline=null; game.buzzerOpen = false; game.buzzedPlayer = null; game.answeringPlayerId = null; game.reveal = false
       if (game.status === 'final') game.status = 'complete'
     }
-    if (action === 'final') { game.status = 'final'; game.activeQuestion = { final: true, question: clone(game.final) }; game.reveal = false; game.buzzerOpen = false }
+    if (action === 'final') { game.status = 'final'; game.activeQuestion = { final: true, question: clone(game.final) }; game.clueDeadline=Date.now()+30000; game.reveal = false; game.buzzerOpen = false }
     if (action === 'revealFinalPlayer') { const response = game.finalResponses.get(payload.playerId); if (response) response.revealed = !response.revealed }
-    if (action === 'nextBoard') { game.boardIndex = 1; game.activeQuestion = null; game.buzzerOpen = false; game.buzzedPlayer = null; game.reveal = false }
+    if (action === 'nextBoard') { game.boardIndex = 1; game.activeQuestion = null; game.clueDeadline=null; game.buzzerOpen = false; game.buzzedPlayer = null; game.reveal = false }
     if (action === 'timeout') { const players=[...game.players.values()]; if(players.length){const low=Math.min(...players.map(p=>p.score)); const choices=players.filter(p=>p.score===low); const next=choices[Math.floor(Math.random()*choices.length)]; game.turnPlayerId=next.id; game.answeringPlayerId=game.activeQuestion?next.id:null; game.buzzerOpen=false; game.buzzedPlayer=null} }
     if (action === 'replay') {
       const reset = makeGame(game.code, game.config)
@@ -118,7 +140,11 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     for (const game of games.values()) {
       if (game.hostSocketId === socket.id) { game.hostSocketId = null; emitGame(game) }
-      for (const [pid, player] of game.players) if (player.socketId === socket.id) { game.players.delete(pid); emitGame(game) }
+      for (const [pid, player] of game.players) if (player.socketId === socket.id) {
+        player.socketId = null
+        if (game.turnPlayerId === pid || game.answeringPlayerId === pid || game.buzzedPlayer === pid) assignLowestConnected(game)
+        emitGame(game)
+      }
     }
   })
 })

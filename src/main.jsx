@@ -16,6 +16,7 @@ import "./end.css";
 import "./mobile.css";
 import "./turns.css";
 import "./controller-answer.css";
+import "./timer.css";
 
 const SERVER =
   import.meta.env.VITE_SERVER_URL ||
@@ -282,6 +283,17 @@ function Scores({ players }) {
     </div>
   );
 }
+function ClueTimer({ deadline }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!deadline) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(timer);
+  }, [deadline]);
+  if (!deadline) return null;
+  return <div className="clue-timer">{Math.max(0, Math.ceil((deadline - now) / 1000))}</div>;
+}
 function Display({ game, host = false, onAction }) {
   const q = game.activeQuestion?.question;
   const buzzed = game.players.find((p) => p.id === game.buzzedPlayer);
@@ -309,6 +321,7 @@ function Display({ game, host = false, onAction }) {
         </div>
       ) : game.activeQuestion ? (
         <div className="clue-screen">
+          <ClueTimer deadline={game.clueDeadline} />
           <p className="eyebrow">
             {q.category} · ${q.value || "FINAL"}
           </p>
@@ -595,17 +608,17 @@ function Player({ game, playerId }) {
   );
 }
 function Join({ onJoined }) {
-  const [code, setCode] = useState(""),
-    [name, setName] = useState(""),
+  const [code, setCode] = useState(sessionStorage.gameCode || ""),
+    [name, setName] = useState(sessionStorage.playerName || ""),
     [error, setError] = useState("");
   const join = () =>
-    socket.emit("player:join", { code, name }, (r) =>
+    socket.emit("player:join", { code, name, returningPlayerId: sessionStorage.playerId }, (r) =>
       r.ok ? onJoined(r.game, r.playerId) : setError(r.error),
     );
   return (
     <main className="join">
       <div className="brand">JEOPARDY!</div>
-      <h1>Join a game</h1>
+      <h1>{sessionStorage.playerId ? "Rejoin your game" : "Join a game"}</h1>
       <input
         placeholder="Game code"
         value={code}
@@ -679,6 +692,8 @@ function App() {
       <Join
         onJoined={(g, p) => {
           sessionStorage.playerId = p;
+          sessionStorage.gameCode = g.code;
+          sessionStorage.playerName = g.players.find((player) => player.id === p)?.name || "";
           setPlayerId(p);
           setGame(g);
         }}
