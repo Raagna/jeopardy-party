@@ -23,7 +23,9 @@ const SERVER =
   import.meta.env.VITE_SERVER_URL ||
   `${location.protocol}//${location.hostname}:3001`;
 const socket = io(SERVER, { autoConnect: true });
-function tone(frequency, duration = .16, type = "sine") { try { const Audio=window.AudioContext||window.webkitAudioContext, ctx=new Audio(), osc=ctx.createOscillator(), gain=ctx.createGain(); osc.type=type;osc.frequency.value=frequency;gain.gain.setValueAtTime(.12,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+duration);osc.connect(gain).connect(ctx.destination);osc.start();osc.stop(ctx.currentTime+duration) } catch {} }
+let soundContext;
+function tone(frequency, duration = .16, type = "sine", volume = .12) { try { const Audio=window.AudioContext||window.webkitAudioContext; soundContext ||= new Audio(); if(soundContext.state === "suspended") soundContext.resume(); const osc=soundContext.createOscillator(), gain=soundContext.createGain(); osc.type=type;osc.frequency.value=frequency;gain.gain.setValueAtTime(volume,soundContext.currentTime);gain.gain.exponentialRampToValueAtTime(.001,soundContext.currentTime+duration);osc.connect(gain).connect(soundContext.destination);osc.start();osc.stop(soundContext.currentTime+duration) } catch {} }
+function useClueMusic(active) { useEffect(()=>{ if(!active) return; let step=0; const notes=[262,330,392,330,294,349,440,349]; const play=()=>tone(notes[step++%notes.length],.3,"triangle",.035); play(); const id=setInterval(play,420); return()=>clearInterval(id) },[active]) }
 const byCategory = (questions) =>
   Object.entries(
     questions
@@ -569,7 +571,8 @@ function Player({ game, playerId }) {
     chooser = game.players.find((p) => p.id === game.turnPlayerId),
     lockedOut = game.incorrectPlayerIds?.includes(playerId);
   const signal = game.lastEvent?.playerId === playerId ? game.lastEvent.type : "";
-  useEffect(() => { if(signal === "correct") tone(880,.28); if(signal === "incorrect") tone(150,.35); if(signal === "daily") tone(660,4,"sawtooth"); }, [game.lastEvent?.at]);
+  useClueMusic(game.buzzerOpen || game.status === "final");
+  useEffect(() => { if(signal === "correct") tone(880,.28); if(signal === "incorrect") tone(150,.35); if(signal === "daily") tone(660,4,"sawtooth"); if(game.lastEvent?.type === "reveal") tone(1047,.55,"sine",.16); }, [game.lastEvent?.at]);
   return (
     <main className={`player ${signal === "correct" ? "signal-correct" : signal === "incorrect" ? "signal-incorrect" : ""}`}>
       <div className="brand">JEOPARDY!</div>
@@ -608,10 +611,9 @@ function Join({ onJoined }) {
   const [code, setCode] = useState(""),
     [name, setName] = useState(sessionStorage.playerName || ""),
     [error, setError] = useState("");
-  const join = () =>
-    socket.emit("player:join", { code, name, returningPlayerId: sessionStorage.playerId }, (r) =>
+  const join = () => { tone(1,.01,"sine",.001); socket.emit("player:join", { code, name, returningPlayerId: sessionStorage.playerId }, (r) =>
       r.ok ? onJoined(r.game, r.playerId) : setError(r.error),
-    );
+    ); };
   return (
     <main className="join">
       <div className="brand">JEOPARDY!</div>
@@ -649,7 +651,7 @@ function EndGame({ game, host, onReplay }) {
           </button>
         </div>
       ) : (
-        <p>Thanks for playing!</p>
+        <div className="player-end"><p>Thanks for playing!</p><button className="new-game" onClick={()=>{sessionStorage.removeItem("playerId");sessionStorage.removeItem("gameCode");sessionStorage.removeItem("playerName");location.assign("./")}}>New game</button></div>
       )}
     </main>
   );
