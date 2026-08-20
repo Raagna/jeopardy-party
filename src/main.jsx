@@ -292,7 +292,7 @@ function ClueTimer({ deadline }) {
     return () => clearInterval(timer);
   }, [deadline]);
   if (!deadline) return null;
-  return <div className="clue-timer">{Math.max(0, Math.ceil((deadline - now) / 1000))}</div>;
+  return <div className="clue-timer">{Math.max(0, Math.ceil((deadline - now) / 1000))}s</div>;
 }
 function Display({ game, host = false, onAction }) {
   const q = game.activeQuestion?.question;
@@ -303,7 +303,8 @@ function Display({ game, host = false, onAction }) {
       <header>
         <div className="brand">JEOPARDY!</div>
         <div className="code">
-          JOIN AT <b>{location.host}</b> · CODE <strong>{game.code}</strong>
+          JOIN AT <b>raagna.github.io/jeopardy-party/</b> · CODE <strong>{game.code}</strong>
+          {game.activeQuestion && <ClueTimer deadline={game.answerDeadline || game.clueDeadline} />}
         </div>
       </header>
       {game.status === "lobby" ? (
@@ -321,11 +322,10 @@ function Display({ game, host = false, onAction }) {
         </div>
       ) : game.activeQuestion ? (
         <div className="clue-screen">
-          <ClueTimer deadline={game.clueDeadline} />
           <p className="eyebrow">
-            {q.category} · ${q.value || "FINAL"}
+            {game.activeQuestion.dailyDouble && !game.activeQuestion.dailyReady ? "DAILY DOUBLE" : `${q.category} · ${q.value || "FINAL"}`}
           </p>
-          <h1>{q.question}</h1>
+          <h1>{game.activeQuestion.dailyDouble && !game.activeQuestion.dailyReady ? "Wager required" : q.question}</h1>
           {game.reveal && <div className="answer">{q.answer}</div>}
           {buzzed && <div className="buzzed">{buzzed.name} buzzed in</div>}
         </div>
@@ -455,19 +455,17 @@ function Controller({ game, onAction }) {
         </>
       ) : game.activeQuestion ? (
         <>
+          {game.activeQuestion.dailyDouble && <p className="turn-note">Daily Double {game.activeQuestion.dailyReady ? `— wager $${game.activeQuestion.dailyWager}` : "— waiting for wager"}</p>}
           <div className="controller-answer">
             <span>Correct response</span>
             {game.activeQuestion.question.answer}
           </div>
-          <button
+          {!game.activeQuestion.dailyDouble && <button
             className={"wide " + (game.buzzerOpen ? "on" : "")}
             onClick={() => onAction("buzzer", { open: !game.buzzerOpen })}
           >
             {game.buzzerOpen ? "BUZZERS OPEN — close" : "Open buzzers"}
-          </button>
-          <button className="wide" onClick={() => onAction("reveal")}>
-            {game.reveal ? "Hide answer" : "Reveal / flip answer"}
-          </button>
+          </button>}
           {buzzed && (
             <div className="judgement">
               <h2>{buzzed.name}</h2>
@@ -520,6 +518,8 @@ function FinalPlayer({ game, playerId, p }) {
     [response, setResponse] = useState(""),
     [error, setError] = useState("");
   const submitted = game.finalResponses.find((x) => x.playerId === playerId);
+  if (p.score < 1)
+    return <p className="locked-final">You are not eligible for Final Jeopardy.</p>;
   if (submitted)
     return (
       <p className="locked-final">
@@ -554,6 +554,11 @@ function FinalPlayer({ game, playerId, p }) {
     </div>
   );
 }
+function DailyWager({ game, playerId, player }) {
+  const [wager,setWager]=useState("5"); const max=Math.max(player.score,game.boardIndex===0?1000:2000,5)
+  if(game.activeQuestion.dailyReady) return <p className="locked-final">Your Daily Double wager is locked: ${game.activeQuestion.dailyWager}</p>
+  return <div className="final-form"><p>DAILY DOUBLE! Wager $5 to ${max}</p><input type="number" min="5" max={max} value={wager} onChange={e=>setWager(e.target.value)}/><button className="primary" onClick={()=>socket.emit("player:dailyWager",{code:game.code,playerId,wager})}>Lock wager</button></div>
+}
 function Player({ game, playerId }) {
   const p = game.players.find((p) => p.id === playerId);
   const buzzed = game.players.find((p) => p.id === game.buzzedPlayer),
@@ -569,33 +574,22 @@ function Player({ game, playerId }) {
         <p>Waiting for the host to start…</p>
       ) : game.status === "final" ? (
         <FinalPlayer game={game} playerId={playerId} p={p} />
+      ) : game.activeQuestion?.dailyDouble ? (
+        game.activeQuestion.dailyPlayerId===playerId ? <DailyWager game={game} playerId={playerId} player={p}/> : <p className="player-status">A Daily Double is in play.</p>
       ) : (
         <>
           <p className="player-status">
             {lockedOut
               ? "Incorrect — wait for the next clue."
-              : hasTurn
-                ? "Your turn — buzz when you have your answer, or pass."
-                : buzzed
-                  ? `${buzzed.name} buzzed in`
+              : buzzed
+                  ? buzzed.id === playerId ? "You buzzed first — answer now!" : `${buzzed.name} buzzed first.`
                   : game.buzzerOpen
                     ? "Buzz in!"
-                    : chooser
-                      ? `${chooser.name} has the first chance.`
-                      : "Watch the board"}
+                    : "Wait for the host to open buzzers."}
           </p>
           <button
-            className="pass-button"
-            disabled={!hasTurn || !game.activeQuestion?.canPass}
-            onClick={() =>
-              socket.emit("player:pass", { code: game.code, playerId })
-            }
-          >
-            PASS
-          </button>
-          <button
-            className={"buzzer " + (game.buzzerOpen || hasTurn ? "ready" : "")}
-            disabled={lockedOut || !!game.buzzedPlayer || !(game.buzzerOpen || hasTurn)}
+            className={"buzzer " + (game.buzzerOpen ? "ready" : "")}
+            disabled={lockedOut || !!game.buzzedPlayer || !game.buzzerOpen}
             onClick={() =>
               socket.emit("player:buzz", { code: game.code, playerId })
             }
@@ -608,7 +602,7 @@ function Player({ game, playerId }) {
   );
 }
 function Join({ onJoined }) {
-  const [code, setCode] = useState(sessionStorage.gameCode || ""),
+  const [code, setCode] = useState(""),
     [name, setName] = useState(sessionStorage.playerName || ""),
     [error, setError] = useState("");
   const join = () =>

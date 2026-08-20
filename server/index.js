@@ -6,6 +6,7 @@ const app = express()
 const httpServer = createServer(app)
 const io = new Server(httpServer, { cors: { origin: '*' } })
 const games = new Map()
+const gameTimers = new Map()
 
 const id = () => Math.random().toString(36).slice(2, 8).toUpperCase()
 const clone = (x) => JSON.parse(JSON.stringify(x))
@@ -32,17 +33,28 @@ function publicGame(game) {
     activeQuestion: game.activeQuestion, reveal: game.reveal, hostConnected: !!game.hostSocketId,
     finalResponses: [...game.finalResponses.entries()].map(([playerId, response]) => ({ playerId, ...response })),
     turnPlayerId: game.turnPlayerId, answeringPlayerId: game.answeringPlayerId, incorrectPlayerIds: game.incorrectPlayerIds,
-    clueDeadline: game.clueDeadline
+    clueDeadline: game.clueDeadline, answerDeadline: game.answerDeadline
   }
 }
 function emitGame(game) { io.to(game.code).emit('game:update', publicGame(game)) }
+function clearGameTimers(game) { const timers=gameTimers.get(game.code)||{}; for(const timer of Object.values(timers)) clearTimeout(timer); gameTimers.set(game.code,{}) }
+function schedule(game, name, ms, fn) { const timers=gameTimers.get(game.code)||{}; clearTimeout(timers[name]); timers[name]=setTimeout(fn, ms); gameTimers.set(game.code,timers) }
+function markUsed(game) { const active=game.activeQuestion; if (!active || active.final) return; const question=game.boards[game.boardIndex]?.[active.categoryIndex]?.questions?.[active.questionIndex]; if(question) question.used=true }
+function returnToBoard(game) { clearGameTimers(game); markUsed(game); game.activeQuestion=null; game.clueDeadline=null; game.answerDeadline=null; game.buzzerOpen=false; game.buzzedPlayer=null; game.answeringPlayerId=null; game.reveal=false; game.incorrectPlayerIds=[]; emitGame(game) }
+function revealThenReturn(game) { clearGameTimers(game); game.buzzerOpen=false; game.reveal=true; game.answerDeadline=null; emitGame(game); schedule(game,'reveal',5000,()=>returnToBoard(game)) }
+function openAnswerWindow(game, playerId) { game.buzzedPlayer=playerId; game.answeringPlayerId=playerId; game.buzzerOpen=false; game.clueDeadline=null; game.answerDeadline=Date.now()+5000; clearTimeout((gameTimers.get(game.code)||{}).clue); emitGame(game); schedule(game,'answer',5000,()=>{ const p=game.players.get(playerId); if(p&&game.activeQuestion){p.score-=game.activeQuestion.question.value; if(!game.incorrectPlayerIds.includes(playerId))game.incorrectPlayerIds.push(playerId); game.buzzedPlayer=null;game.answeringPlayerId=null;game.answerDeadline=null; if(game.incorrectPlayerIds.length>=connectedPlayers(game).length)revealThenReturn(game); else emitGame(game) } }) }
 function makeGame(code, config) {
+  const boards = config.boards.map((board) => board.map((category) => ({ ...category, questions: category.questions.map((q, i) => ({ ...q, value: q.value || (i + 1) * 200, used: false, dailyDouble: false })) })))
+  boards.forEach((board, index) => {
+    const clues=board.flatMap((category, categoryIndex)=>category.questions.map((question,questionIndex)=>({question,categoryIndex,questionIndex})))
+    for(let i=0;i<(index===0?1:2)&&clues.length;i++){const pick=clues.splice(Math.floor(Math.random()*clues.length),1)[0];pick.question.dailyDouble=true}
+  })
   return {
     code, status: 'lobby', hostSocketId: null, players: new Map(),
     config: clone(config),
-    boards: config.boards.map((board) => board.map((category) => ({ ...category, questions: category.questions.map((q, i) => ({ ...q, value: q.value || (i + 1) * 200, used: false })) }))),
+    boards,
     boardIndex: 0,
-    final: config.final, buzzerOpen: false, buzzedPlayer: null, activeQuestion: null, reveal: false, finalResponses: new Map(), turnPlayerId: null, answeringPlayerId: null, incorrectPlayerIds: [], clueDeadline: null
+    final: config.final, buzzerOpen: false, buzzedPlayer: null, activeQuestion: null, reveal: false, finalResponses: new Map(), turnPlayerId: null, answeringPlayerId: null, incorrectPlayerIds: [], clueDeadline: null, answerDeadline: null
   }
 }
 
@@ -76,36 +88,36 @@ io.on('connection', (socket) => {
     if (action === 'start') { game.status = 'playing'; const players=connectedPlayers(game); game.turnPlayerId=players[Math.floor(Math.random()*players.length)]?.id || null }
     if (action === 'select') {
       const { categoryIndex, questionIndex } = payload; const q = game.boards[game.boardIndex][categoryIndex]?.questions[questionIndex]
-      if (q && !q.used) { game.activeQuestion = { categoryIndex, questionIndex, question: clone(q), canPass: true }; game.clueDeadline=Date.now()+30000; game.buzzedPlayer = null; game.answeringPlayerId = game.turnPlayerId; game.incorrectPlayerIds=[]; game.buzzerOpen = false; game.reveal = false }
+      if (q && !q.used) {
+        clearGameTimers(game)
+        const dailyPlayer=q.dailyDouble ? connectedPlayers(game)[Math.floor(Math.random()*connectedPlayers(game).length)] : null
+        game.activeQuestion = { categoryIndex, questionIndex, question: clone(q), dailyDouble:!!q.dailyDouble, dailyPlayerId:dailyPlayer?.id || null, dailyWager:null, dailyReady:!q.dailyDouble }
+        game.clueDeadline=q.dailyDouble?null:Date.now()+30000; game.answerDeadline=null; game.buzzedPlayer = null; game.answeringPlayerId = null; game.incorrectPlayerIds=[]; game.buzzerOpen = false; game.reveal = false
+        emitGame(game); if(!q.dailyDouble) schedule(game,'clue',30000,()=>revealThenReturn(game)); return
+      }
     }
-    if (action === 'buzzer') { game.buzzerOpen = !!payload.open; if (payload.open) game.buzzedPlayer = null }
-    if (action === 'reveal') game.reveal = !game.reveal
+    if (action === 'buzzer') { if(game.activeQuestion && !game.reveal && !game.answeringPlayerId) { game.buzzerOpen = !!payload.open; if (payload.open) game.buzzedPlayer = null } }
     if (action === 'score') {
-      const p = game.players.get(payload.playerId); const amount = Number(payload.amount) || 0
+      const p = game.players.get(payload.playerId); let amount = Number(payload.amount) || 0
+      if (game.activeQuestion?.dailyDouble && game.activeQuestion.dailyWager) amount = Math.sign(amount || 1) * game.activeQuestion.dailyWager
       if (p) p.score += amount
       // A correct regular-clue ruling immediately awards control and returns to the board.
       if (p && amount > 0 && game.status === 'playing' && game.activeQuestion && !game.activeQuestion.final) {
-        const category = game.boards[game.boardIndex]?.[game.activeQuestion.categoryIndex]
-        const question = category?.questions?.[game.activeQuestion.questionIndex]
-        if (question) question.used = true
-        game.turnPlayerId = p.id; game.answeringPlayerId = null; game.activeQuestion = null; game.clueDeadline=null
-        game.buzzerOpen = false; game.buzzedPlayer = null; game.incorrectPlayerIds=[]; game.reveal = false
+        game.turnPlayerId = p.id; revealThenReturn(game); return
       } else if (p && amount < 0 && game.status === 'playing' && game.activeQuestion && !game.activeQuestion.final) {
+        if (game.activeQuestion.dailyDouble) { game.turnPlayerId=p.id; revealThenReturn(game); return }
         if (!game.incorrectPlayerIds.includes(p.id)) game.incorrectPlayerIds.push(p.id)
-        game.answeringPlayerId=null; game.buzzedPlayer=null; game.buzzerOpen=true
-        if (game.incorrectPlayerIds.length >= connectedPlayers(game).length) game.reveal=true
+        clearTimeout((gameTimers.get(game.code)||{}).answer); game.answeringPlayerId=null; game.buzzedPlayer=null; game.answerDeadline=null; game.buzzerOpen=false
+        if (game.incorrectPlayerIds.length >= connectedPlayers(game).length) { revealThenReturn(game); return }
       }
     }
     if (action === 'close') {
-      if (game.activeQuestion && !game.activeQuestion.final) {
-        const category = game.boards[game.boardIndex]?.[game.activeQuestion.categoryIndex]
-        const question = category?.questions?.[game.activeQuestion.questionIndex]
-        if (question) question.used = true
-      }
-      game.activeQuestion = null; game.clueDeadline=null; game.buzzerOpen = false; game.buzzedPlayer = null; game.answeringPlayerId = null; game.reveal = false
+      clearGameTimers(game)
+      if (game.activeQuestion && !game.activeQuestion.final) markUsed(game)
+      game.activeQuestion = null; game.clueDeadline=null; game.answerDeadline=null; game.buzzerOpen = false; game.buzzedPlayer = null; game.answeringPlayerId = null; game.reveal = false
       if (game.status === 'final') game.status = 'complete'
     }
-    if (action === 'final') { game.status = 'final'; game.activeQuestion = { final: true, question: clone(game.final) }; game.clueDeadline=Date.now()+30000; game.reveal = false; game.buzzerOpen = false }
+    if (action === 'final') { game.status = 'final'; game.activeQuestion = { final: true, question: clone(game.final) }; game.clueDeadline=null; game.reveal = false; game.buzzerOpen = false }
     if (action === 'revealFinalPlayer') { const response = game.finalResponses.get(payload.playerId); if (response) response.revealed = !response.revealed }
     if (action === 'nextBoard') { game.boardIndex = 1; game.activeQuestion = null; game.clueDeadline=null; game.buzzerOpen = false; game.buzzedPlayer = null; game.reveal = false }
     if (action === 'timeout') { const players=[...game.players.values()]; if(players.length){const low=Math.min(...players.map(p=>p.score)); const choices=players.filter(p=>p.score===low); const next=choices[Math.floor(Math.random()*choices.length)]; game.turnPlayerId=next.id; game.answeringPlayerId=game.activeQuestion?next.id:null; game.buzzerOpen=false; game.buzzedPlayer=null} }
@@ -121,16 +133,19 @@ io.on('connection', (socket) => {
     emitGame(game)
   })
   socket.on('player:buzz', ({ code, playerId }) => {
-    const game = games.get(code); if (!game || (!game.buzzerOpen && game.answeringPlayerId !== playerId) || game.buzzedPlayer || !game.players.has(playerId) || game.incorrectPlayerIds.includes(playerId)) return
-    game.buzzedPlayer = playerId; game.answeringPlayerId = playerId; if(game.activeQuestion) game.activeQuestion.canPass=false; game.buzzerOpen = false; emitGame(game)
+    const game = games.get(code); if (!game || !game.buzzerOpen || game.buzzedPlayer || !game.players.get(playerId)?.socketId || game.incorrectPlayerIds.includes(playerId)) return
+    openAnswerWindow(game, playerId)
   })
-  socket.on('player:pass', ({ code, playerId }) => {
-    const game=games.get(code); if(!game || !game.activeQuestion || !game.activeQuestion.canPass || game.answeringPlayerId!==playerId) return
-    game.answeringPlayerId=null; game.buzzedPlayer=null; game.buzzerOpen=true; emitGame(game)
+  socket.on('player:dailyWager', ({ code, playerId, wager }) => {
+    const game=games.get(code), active=game?.activeQuestion, player=game?.players.get(playerId)
+    if(!game||!active?.dailyDouble||active.dailyPlayerId!==playerId||active.dailyReady||!player)return
+    const max=Math.max(player.score, game.boardIndex===0?1000:2000, 5); const value=Math.max(5,Math.min(Number(wager)||5,max))
+    active.dailyWager=value; active.dailyReady=true; game.answeringPlayerId=playerId; game.clueDeadline=Date.now()+30000
+    emitGame(game); schedule(game,'clue',30000,()=>{player.score-=value;revealThenReturn(game)})
   })
   socket.on('player:finalSubmit', ({ code, playerId, wager, response }, ack) => {
     const game = games.get(code); const player = game?.players.get(playerId)
-    if (!game || !player || game.status !== 'final' || game.finalResponses.has(playerId)) return ack?.({ ok: false, error: 'Final response is not available.' })
+    if (!game || !player || player.score < 1 || game.status !== 'final' || game.finalResponses.has(playerId)) return ack?.({ ok: false, error: 'Final response is not available.' })
     const amount = Math.max(0, Math.min(Number(wager) || 0, Math.max(0, player.score)))
     const text = String(response || '').trim().slice(0, 500)
     if (!text) return ack?.({ ok: false, error: 'Enter your response.' })
