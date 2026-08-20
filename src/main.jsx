@@ -316,7 +316,7 @@ function Display({ game, host = false, onAction }) {
         <div className="brand">JEOPARDY!</div>
         <div className="code">
           JOIN AT <b>raagna.github.io/jeopardy-party/</b> · CODE <strong>{game.code}</strong>
-          {game.activeQuestion && <ClueTimer deadline={game.answerDeadline || game.clueDeadline} serverNow={game.serverNow} />}
+          {game.activeQuestion && <ClueTimer deadline={game.answerDeadline || game.clueDeadline || game.finalDeadline} serverNow={game.serverNow} />}
         </div>
       </header>
       {game.status === "lobby" ? (
