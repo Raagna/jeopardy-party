@@ -33,7 +33,7 @@ function publicGame(game) {
     activeQuestion: game.activeQuestion, reveal: game.reveal, hostConnected: !!game.hostSocketId,
     finalResponses: [...game.finalResponses.entries()].map(([playerId, response]) => ({ playerId, ...response })),
     turnPlayerId: game.turnPlayerId, answeringPlayerId: game.answeringPlayerId, incorrectPlayerIds: game.incorrectPlayerIds,
-    clueDeadline: game.clueDeadline, answerDeadline: game.answerDeadline
+    clueDeadline: game.clueDeadline, answerDeadline: game.answerDeadline, serverNow: Date.now(), lastEvent: game.lastEvent
   }
 }
 function emitGame(game) { io.to(game.code).emit('game:update', publicGame(game)) }
@@ -54,7 +54,7 @@ function makeGame(code, config) {
     config: clone(config),
     boards,
     boardIndex: 0,
-    final: config.final, buzzerOpen: false, buzzedPlayer: null, activeQuestion: null, reveal: false, finalResponses: new Map(), turnPlayerId: null, answeringPlayerId: null, incorrectPlayerIds: [], clueDeadline: null, answerDeadline: null
+    final: config.final, buzzerOpen: false, buzzedPlayer: null, activeQuestion: null, reveal: false, finalResponses: new Map(), turnPlayerId: null, answeringPlayerId: null, incorrectPlayerIds: [], clueDeadline: null, answerDeadline: null, lastEvent: null
   }
 }
 
@@ -71,7 +71,7 @@ io.on('connection', (socket) => {
   socket.on('player:join', ({ code, name, returningPlayerId }, ack) => {
     const game = games.get(code?.toUpperCase()); if (!game) return ack?.({ ok: false, error: 'Game not found' })
     const returning = game.players.get(returningPlayerId)
-    if (returning && !returning.socketId) {
+    if (returning) {
       returning.socketId = socket.id
       socket.join(game.code); socket.data.game = game.code; socket.data.player = returning.id
       ack?.({ ok: true, playerId: returning.id, game: publicGame(game), rejoined: true }); emitGame(game)
@@ -91,6 +91,7 @@ io.on('connection', (socket) => {
       if (q && !q.used) {
         clearGameTimers(game)
         const dailyPlayer=q.dailyDouble ? connectedPlayers(game)[Math.floor(Math.random()*connectedPlayers(game).length)] : null
+        if(dailyPlayer) game.lastEvent={type:'daily',playerId:dailyPlayer.id,at:Date.now()}
         game.activeQuestion = { categoryIndex, questionIndex, question: clone(q), dailyDouble:!!q.dailyDouble, dailyPlayerId:dailyPlayer?.id || null, dailyWager:null, dailyReady:!q.dailyDouble }
         game.clueDeadline=q.dailyDouble?null:Date.now()+30000; game.answerDeadline=null; game.buzzedPlayer = null; game.answeringPlayerId = null; game.incorrectPlayerIds=[]; game.buzzerOpen = false; game.reveal = false
         emitGame(game); if(!q.dailyDouble) schedule(game,'clue',30000,()=>revealThenReturn(game)); return
@@ -103,11 +104,11 @@ io.on('connection', (socket) => {
       if (p) p.score += amount
       // A correct regular-clue ruling immediately awards control and returns to the board.
       if (p && amount > 0 && game.status === 'playing' && game.activeQuestion && !game.activeQuestion.final) {
-        game.turnPlayerId = p.id; revealThenReturn(game); return
+        game.turnPlayerId = p.id; game.lastEvent={type:'correct',playerId:p.id,at:Date.now()}; revealThenReturn(game); return
       } else if (p && amount < 0 && game.status === 'playing' && game.activeQuestion && !game.activeQuestion.final) {
-        if (game.activeQuestion.dailyDouble) { game.turnPlayerId=p.id; revealThenReturn(game); return }
+        if (game.activeQuestion.dailyDouble) { game.turnPlayerId=p.id; game.lastEvent={type:'incorrect',playerId:p.id,at:Date.now()}; revealThenReturn(game); return }
         if (!game.incorrectPlayerIds.includes(p.id)) game.incorrectPlayerIds.push(p.id)
-        clearTimeout((gameTimers.get(game.code)||{}).answer); game.answeringPlayerId=null; game.buzzedPlayer=null; game.answerDeadline=null; game.buzzerOpen=false
+        clearTimeout((gameTimers.get(game.code)||{}).answer); game.lastEvent={type:'incorrect',playerId:p.id,at:Date.now()}; game.answeringPlayerId=null; game.buzzedPlayer=null; game.answerDeadline=null; game.buzzerOpen=false
         if (game.incorrectPlayerIds.length >= connectedPlayers(game).length) { revealThenReturn(game); return }
       }
     }
@@ -133,14 +134,15 @@ io.on('connection', (socket) => {
     emitGame(game)
   })
   socket.on('player:buzz', ({ code, playerId }) => {
-    const game = games.get(code); if (!game || !game.buzzerOpen || game.buzzedPlayer || !game.players.get(playerId)?.socketId || game.incorrectPlayerIds.includes(playerId)) return
-    openAnswerWindow(game, playerId)
+    const game = games.get(code); const dailyAllowed=game?.activeQuestion?.dailyDouble && game.activeQuestion.dailyReady && game.activeQuestion.dailyPlayerId===playerId
+    if (!game || (!game.buzzerOpen && !dailyAllowed) || game.buzzedPlayer || !game.players.get(playerId)?.socketId || game.incorrectPlayerIds.includes(playerId)) return
+    game.lastEvent={type:'buzz',playerId,at:Date.now()}; openAnswerWindow(game, playerId)
   })
   socket.on('player:dailyWager', ({ code, playerId, wager }) => {
     const game=games.get(code), active=game?.activeQuestion, player=game?.players.get(playerId)
     if(!game||!active?.dailyDouble||active.dailyPlayerId!==playerId||active.dailyReady||!player)return
     const max=Math.max(player.score, game.boardIndex===0?1000:2000, 5); const value=Math.max(5,Math.min(Number(wager)||5,max))
-    active.dailyWager=value; active.dailyReady=true; game.answeringPlayerId=playerId; game.clueDeadline=Date.now()+30000
+    active.dailyWager=value; active.dailyReady=true; game.answeringPlayerId=null; game.clueDeadline=Date.now()+30000
     emitGame(game); schedule(game,'clue',30000,()=>{player.score-=value;revealThenReturn(game)})
   })
   socket.on('player:finalSubmit', ({ code, playerId, wager, response }, ack) => {

@@ -1,0 +1,1 @@
+.signal-correct{animation:correctFlash .8s ease-in-out 3}.signal-incorrect{animation:incorrectFlash .8s ease-in-out 3}@keyframes correctFlash{50%{background:#0d6b3a}}@keyframes incorrectFlash{50%{background:#8b1825}}

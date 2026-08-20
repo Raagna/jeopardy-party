@@ -17,11 +17,13 @@ import "./mobile.css";
 import "./turns.css";
 import "./controller-answer.css";
 import "./timer.css";
+import "./signals.css";
 
 const SERVER =
   import.meta.env.VITE_SERVER_URL ||
   `${location.protocol}//${location.hostname}:3001`;
 const socket = io(SERVER, { autoConnect: true });
+function tone(frequency, duration = .16, type = "sine") { try { const Audio=window.AudioContext||window.webkitAudioContext, ctx=new Audio(), osc=ctx.createOscillator(), gain=ctx.createGain(); osc.type=type;osc.frequency.value=frequency;gain.gain.setValueAtTime(.12,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+duration);osc.connect(gain).connect(ctx.destination);osc.start();osc.stop(ctx.currentTime+duration) } catch {} }
 const byCategory = (questions) =>
   Object.entries(
     questions
@@ -283,16 +285,17 @@ function Scores({ players }) {
     </div>
   );
 }
-function ClueTimer({ deadline }) {
-  const [now, setNow] = useState(Date.now());
+function ClueTimer({ deadline, serverNow }) {
+  const [remaining, setRemaining] = useState(0);
   useEffect(() => {
     if (!deadline) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 250);
+    const startedAt=Date.now(), startRemaining=Math.max(0,deadline-serverNow);
+    const update=()=>setRemaining(Math.max(0,startRemaining-(Date.now()-startedAt)));
+    update(); const timer = setInterval(update, 250);
     return () => clearInterval(timer);
-  }, [deadline]);
+  }, [deadline,serverNow]);
   if (!deadline) return null;
-  return <div className="clue-timer">{Math.max(0, Math.ceil((deadline - now) / 1000))}s</div>;
+  return <div className="clue-timer">{Math.ceil(remaining / 1000)}s</div>;
 }
 function Display({ game, host = false, onAction }) {
   const q = game.activeQuestion?.question;
@@ -304,7 +307,7 @@ function Display({ game, host = false, onAction }) {
         <div className="brand">JEOPARDY!</div>
         <div className="code">
           JOIN AT <b>raagna.github.io/jeopardy-party/</b> · CODE <strong>{game.code}</strong>
-          {game.activeQuestion && <ClueTimer deadline={game.answerDeadline || game.clueDeadline} />}
+          {game.activeQuestion && <ClueTimer deadline={game.answerDeadline || game.clueDeadline} serverNow={game.serverNow} />}
         </div>
       </header>
       {game.status === "lobby" ? (
@@ -556,7 +559,7 @@ function FinalPlayer({ game, playerId, p }) {
 }
 function DailyWager({ game, playerId, player }) {
   const [wager,setWager]=useState("5"); const max=Math.max(player.score,game.boardIndex===0?1000:2000,5)
-  if(game.activeQuestion.dailyReady) return <p className="locked-final">Your Daily Double wager is locked: ${game.activeQuestion.dailyWager}</p>
+  if(game.activeQuestion.dailyReady) return <><p className="locked-final">Your wager is locked: ${game.activeQuestion.dailyWager}</p><button className="buzzer ready" disabled={!!game.buzzedPlayer} onClick={()=>socket.emit("player:buzz",{code:game.code,playerId})}>BUZZ!</button></>
   return <div className="final-form"><p>DAILY DOUBLE! Wager $5 to ${max}</p><input type="number" min="5" max={max} value={wager} onChange={e=>setWager(e.target.value)}/><button className="primary" onClick={()=>socket.emit("player:dailyWager",{code:game.code,playerId,wager})}>Lock wager</button></div>
 }
 function Player({ game, playerId }) {
@@ -565,8 +568,10 @@ function Player({ game, playerId }) {
     hasTurn = game.answeringPlayerId === playerId,
     chooser = game.players.find((p) => p.id === game.turnPlayerId),
     lockedOut = game.incorrectPlayerIds?.includes(playerId);
+  const signal = game.lastEvent?.playerId === playerId ? game.lastEvent.type : "";
+  useEffect(() => { if(signal === "correct") tone(880,.28); if(signal === "incorrect") tone(150,.35); if(signal === "daily") tone(660,4,"sawtooth"); }, [game.lastEvent?.at]);
   return (
-    <main className="player">
+    <main className={`player ${signal === "correct" ? "signal-correct" : signal === "incorrect" ? "signal-incorrect" : ""}`}>
       <div className="brand">JEOPARDY!</div>
       <h2>{p?.name}</h2>
       <div className="player-score">${p?.score?.toLocaleString() || 0}</div>
@@ -590,9 +595,7 @@ function Player({ game, playerId }) {
           <button
             className={"buzzer " + (game.buzzerOpen ? "ready" : "")}
             disabled={lockedOut || !!game.buzzedPlayer || !game.buzzerOpen}
-            onClick={() =>
-              socket.emit("player:buzz", { code: game.code, playerId })
-            }
+            onClick={() => { tone(420,.1,"square"); socket.emit("player:buzz", { code: game.code, playerId }); }}
           >
             BUZZ!
           </button>
@@ -632,16 +635,15 @@ function Join({ onJoined }) {
   );
 }
 function EndGame({ game, host, onReplay }) {
+  const ranked=[...game.players].sort((a,b)=>b.score-a.score), top=ranked.slice(0,3), rest=ranked.slice(3);
   return (
     <main className="waiting">
       <p className="eyebrow">GAME COMPLETE</p>
       <h1>Final standings</h1>
-      <Scores players={[...game.players].sort((a, b) => b.score - a.score)} />
+      <div className="podium">{top.map((p,i)=><div className={`place place-${i+1}`} key={p.id}><span>#{i+1}</span><b>{p.name}</b><strong>${p.score}</strong></div>)}</div>
+      {rest.length>0&&<div className="remaining-players">{rest.map((p,i)=><div key={p.id}>#{i+4} {p.name}<b>${p.score}</b></div>)}</div>}
       {host ? (
         <div className="end-actions">
-          <button className="primary" onClick={onReplay}>
-            Play again
-          </button>
           <button className="new-game" onClick={() => location.assign("?host")}>
             New game
           </button>
