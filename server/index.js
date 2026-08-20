@@ -40,9 +40,9 @@ function emitGame(game) { io.to(game.code).emit('game:update', publicGame(game))
 function clearGameTimers(game) { const timers=gameTimers.get(game.code)||{}; for(const timer of Object.values(timers)) clearTimeout(timer); gameTimers.set(game.code,{}) }
 function schedule(game, name, ms, fn) { const timers=gameTimers.get(game.code)||{}; clearTimeout(timers[name]); timers[name]=setTimeout(fn, ms); gameTimers.set(game.code,timers) }
 function markUsed(game) { const active=game.activeQuestion; if (!active || active.final) return; const question=game.boards[game.boardIndex]?.[active.categoryIndex]?.questions?.[active.questionIndex]; if(question) question.used=true }
-function returnToBoard(game) { clearGameTimers(game); markUsed(game); game.activeQuestion=null; game.clueDeadline=null; game.answerDeadline=null; game.buzzerOpen=false; game.buzzedPlayer=null; game.answeringPlayerId=null; game.reveal=false; game.incorrectPlayerIds=[]; emitGame(game) }
+function returnToBoard(game) { clearGameTimers(game); markUsed(game); game.activeQuestion=null; game.clueDeadline=null; game.cluePausedRemaining=null; game.answerDeadline=null; game.buzzerOpen=false; game.buzzedPlayer=null; game.answeringPlayerId=null; game.reveal=false; game.incorrectPlayerIds=[]; emitGame(game) }
 function revealThenReturn(game, eventType='reveal') { clearGameTimers(game); game.buzzerOpen=false; game.reveal=true; game.answerDeadline=null; game.lastEvent={type:eventType,playerId:game.answeringPlayerId,at:Date.now()}; emitGame(game); schedule(game,'reveal',5000,()=>returnToBoard(game)) }
-function openAnswerWindow(game, playerId) { game.buzzedPlayer=playerId; game.answeringPlayerId=playerId; game.buzzerOpen=false; game.clueDeadline=null; game.answerDeadline=Date.now()+5000; clearTimeout((gameTimers.get(game.code)||{}).clue); emitGame(game); schedule(game,'answer',5000,()=>{ const p=game.players.get(playerId); if(p&&game.activeQuestion){const penalty=game.activeQuestion.dailyDouble ? game.activeQuestion.dailyWager : game.activeQuestion.question.value; p.score-=penalty; if(!game.incorrectPlayerIds.includes(playerId))game.incorrectPlayerIds.push(playerId); game.lastEvent={type:'incorrect',playerId,at:Date.now()}; game.buzzedPlayer=null;game.answeringPlayerId=null;game.answerDeadline=null; if(game.activeQuestion.dailyDouble || game.incorrectPlayerIds.length>=connectedPlayers(game).length)revealThenReturn(game); else emitGame(game) } }) }
+function openAnswerWindow(game, playerId) { game.buzzedPlayer=playerId; game.answeringPlayerId=playerId; game.buzzerOpen=false; game.cluePausedRemaining=game.clueDeadline ? Math.max(0,game.clueDeadline-Date.now()) : game.cluePausedRemaining; game.clueDeadline=null; game.answerDeadline=Date.now()+5000; clearTimeout((gameTimers.get(game.code)||{}).clue); emitGame(game); schedule(game,'answer',5000,()=>{ const p=game.players.get(playerId); if(p&&game.activeQuestion){const penalty=game.activeQuestion.dailyDouble ? game.activeQuestion.dailyWager : game.activeQuestion.question.value; p.score-=penalty; if(!game.incorrectPlayerIds.includes(playerId))game.incorrectPlayerIds.push(playerId); game.lastEvent={type:'incorrect',playerId,at:Date.now()}; game.buzzedPlayer=null;game.answeringPlayerId=null;game.answerDeadline=null; if(game.activeQuestion.dailyDouble || game.incorrectPlayerIds.length>=connectedPlayers(game).length)revealThenReturn(game); else emitGame(game) } }) }
 function makeGame(code, config) {
   const boards = config.boards.map((board) => board.map((category) => ({ ...category, questions: category.questions.map((q, i) => ({ ...q, value: q.value || (i + 1) * 200, used: false, dailyDouble: false })) })))
   boards.forEach((board, index) => {
@@ -54,7 +54,7 @@ function makeGame(code, config) {
     config: clone(config),
     boards,
     boardIndex: 0,
-    final: config.final, buzzerOpen: false, buzzedPlayer: null, activeQuestion: null, reveal: false, finalResponses: new Map(), turnPlayerId: null, answeringPlayerId: null, incorrectPlayerIds: [], clueDeadline: null, answerDeadline: null, lastEvent: null
+    final: config.final, buzzerOpen: false, buzzedPlayer: null, activeQuestion: null, reveal: false, finalResponses: new Map(), turnPlayerId: null, answeringPlayerId: null, incorrectPlayerIds: [], clueDeadline: null, cluePausedRemaining: null, answerDeadline: null, lastEvent: null
   }
 }
 
@@ -93,11 +93,11 @@ io.on('connection', (socket) => {
         const dailyPlayer=q.dailyDouble ? connectedPlayers(game)[Math.floor(Math.random()*connectedPlayers(game).length)] : null
         if(dailyPlayer) game.lastEvent={type:'daily',playerId:dailyPlayer.id,at:Date.now()}
         game.activeQuestion = { categoryIndex, questionIndex, question: clone(q), dailyDouble:!!q.dailyDouble, dailyPlayerId:dailyPlayer?.id || null, dailyWager:null, dailyReady:!q.dailyDouble }
-        game.clueDeadline=q.dailyDouble?null:Date.now()+30000; game.answerDeadline=null; game.buzzedPlayer = null; game.answeringPlayerId = null; game.incorrectPlayerIds=[]; game.buzzerOpen = false; game.reveal = false
+        game.clueDeadline=q.dailyDouble?null:Date.now()+30000; game.cluePausedRemaining=null; game.answerDeadline=null; game.buzzedPlayer = null; game.answeringPlayerId = null; game.incorrectPlayerIds=[]; game.buzzerOpen = false; game.reveal = false
         emitGame(game); if(!q.dailyDouble) schedule(game,'clue',30000,()=>revealThenReturn(game)); return
       }
     }
-    if (action === 'buzzer') { if(game.activeQuestion && !game.reveal && !game.answeringPlayerId) { game.buzzerOpen = !!payload.open; if (payload.open) game.buzzedPlayer = null } }
+    if (action === 'buzzer') { if(game.activeQuestion && !game.reveal && !game.answeringPlayerId) { game.buzzerOpen = !!payload.open; if (payload.open) { game.buzzedPlayer = null; if(game.cluePausedRemaining != null){ game.clueDeadline=Date.now()+game.cluePausedRemaining; const remaining=game.cluePausedRemaining; game.cluePausedRemaining=null; schedule(game,'clue',remaining,()=>revealThenReturn(game)) } } } }
     if (action === 'score') {
       const p = game.players.get(payload.playerId); let amount = Number(payload.amount) || 0
       if (game.activeQuestion?.dailyDouble && game.activeQuestion.dailyWager) amount = Math.sign(amount || 1) * game.activeQuestion.dailyWager
@@ -115,12 +115,12 @@ io.on('connection', (socket) => {
     if (action === 'close') {
       clearGameTimers(game)
       if (game.activeQuestion && !game.activeQuestion.final) markUsed(game)
-      game.activeQuestion = null; game.clueDeadline=null; game.answerDeadline=null; game.buzzerOpen = false; game.buzzedPlayer = null; game.answeringPlayerId = null; game.reveal = false
+      game.activeQuestion = null; game.clueDeadline=null; game.cluePausedRemaining=null; game.answerDeadline=null; game.buzzerOpen = false; game.buzzedPlayer = null; game.answeringPlayerId = null; game.reveal = false
       if (game.status === 'final') game.status = 'complete'
     }
     if (action === 'final') { game.status = 'final'; game.activeQuestion = { final: true, question: clone(game.final) }; game.clueDeadline=null; game.reveal = false; game.buzzerOpen = false }
     if (action === 'revealFinalPlayer') { const response = game.finalResponses.get(payload.playerId); if (response) response.revealed = !response.revealed }
-    if (action === 'nextBoard') { game.boardIndex = 1; game.activeQuestion = null; game.clueDeadline=null; game.buzzerOpen = false; game.buzzedPlayer = null; game.reveal = false }
+    if (action === 'nextBoard') { game.boardIndex = 1; game.activeQuestion = null; game.clueDeadline=null; game.cluePausedRemaining=null; game.buzzerOpen = false; game.buzzedPlayer = null; game.reveal = false }
     if (action === 'timeout') { const players=[...game.players.values()]; if(players.length){const low=Math.min(...players.map(p=>p.score)); const choices=players.filter(p=>p.score===low); const next=choices[Math.floor(Math.random()*choices.length)]; game.turnPlayerId=next.id; game.answeringPlayerId=game.activeQuestion?next.id:null; game.buzzerOpen=false; game.buzzedPlayer=null} }
     if (action === 'replay') {
       const reset = makeGame(game.code, game.config)

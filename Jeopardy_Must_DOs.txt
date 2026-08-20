@@ -1,0 +1,12 @@
+So far jeopardy
+
+buttons dont work when someone leaves fix that
+add timer for question
+add timer for people after buzzing (question timer should pause here)
+add music for both scenarios and general bg music
+add sound effect for buzzer and correct answer and wrong answer
+daily double
+when someone answers correctly show the answer and then go back to main screen
+after question is clicked all buzzers should open and the question should disappear
+failure to respond within five seconds deducts the clue's value from the contestant's score (the "jeopardy") and allows the other contestants the opportunity to ring in and respond.
+take out play again

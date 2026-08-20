@@ -24,7 +24,9 @@ const SERVER =
   `${location.protocol}//${location.hostname}:3001`;
 const socket = io(SERVER, { autoConnect: true });
 let soundContext;
+let dailyDoubleAudio, dailyDoubleStop;
 function tone(frequency, duration = .16, type = "sine", volume = .12) { try { const Audio=window.AudioContext||window.webkitAudioContext; soundContext ||= new Audio(); if(soundContext.state === "suspended") soundContext.resume(); const osc=soundContext.createOscillator(), gain=soundContext.createGain(); osc.type=type;osc.frequency.value=frequency;gain.gain.setValueAtTime(volume,soundContext.currentTime);gain.gain.exponentialRampToValueAtTime(.001,soundContext.currentTime+duration);osc.connect(gain).connect(soundContext.destination);osc.start();osc.stop(soundContext.currentTime+duration) } catch {} }
+function playDailyDouble() { try { dailyDoubleAudio ||= new Audio(`${import.meta.env.BASE_URL}audio/daily-double.mp3`); clearTimeout(dailyDoubleStop); dailyDoubleAudio.pause(); dailyDoubleAudio.currentTime=0; dailyDoubleAudio.play().catch(()=>{}); dailyDoubleStop=setTimeout(()=>{ dailyDoubleAudio.pause(); dailyDoubleAudio.currentTime=0 },4000) } catch {} }
 function useClueMusic(active) { useEffect(()=>{ if(!active) return; let step=0; const notes=[262,330,392,330,294,349,440,349]; const play=()=>tone(notes[step++%notes.length],.3,"triangle",.035); play(); const id=setInterval(play,420); return()=>clearInterval(id) },[active]) }
 const byCategory = (questions) =>
   Object.entries(
@@ -306,6 +308,7 @@ function Display({ game, host = false, onAction }) {
   useClueMusic(Boolean(game.activeQuestion && game.buzzerOpen));
   useEffect(() => {
     if (game.lastEvent?.type === "reveal") tone(1047, .55, "sine", .16);
+    if (game.lastEvent?.type === "daily") playDailyDouble();
   }, [game.lastEvent?.at]);
   return (
     <main className="display">
@@ -576,7 +579,7 @@ function Player({ game, playerId }) {
     lockedOut = game.incorrectPlayerIds?.includes(playerId);
   const signal = game.lastEvent?.playerId === playerId ? game.lastEvent.type : "";
   useClueMusic(game.buzzerOpen || game.status === "final");
-  useEffect(() => { if(signal === "correct") tone(880,.28); if(signal === "incorrect") tone(150,.35); if(signal === "daily") tone(660,4,"sawtooth"); if(game.lastEvent?.type === "reveal") tone(1047,.55,"sine",.16); }, [game.lastEvent?.at]);
+  useEffect(() => { if(signal === "correct") tone(880,.28); if(signal === "incorrect") tone(150,.35); if(signal === "daily") playDailyDouble(); if(game.lastEvent?.type === "reveal") tone(1047,.55,"sine",.16); }, [game.lastEvent?.at]);
   return (
     <main className={`player ${signal === "correct" ? "signal-correct" : signal === "incorrect" ? "signal-incorrect" : ""}`}>
       <div className="brand">JEOPARDY!</div>
