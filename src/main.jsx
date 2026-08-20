@@ -303,6 +303,10 @@ function Display({ game, host = false, onAction }) {
   const q = game.activeQuestion?.question;
   const buzzed = game.players.find((p) => p.id === game.buzzedPlayer);
   const boardDone = game.board?.every((c) => c.questions.every((q) => q.used));
+  useClueMusic(Boolean(game.activeQuestion && game.buzzerOpen));
+  useEffect(() => {
+    if (game.lastEvent?.type === "reveal") tone(1047, .55, "sine", .16);
+  }, [game.lastEvent?.at]);
   return (
     <main className="display">
       <header>
