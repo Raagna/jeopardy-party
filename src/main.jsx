@@ -301,6 +301,7 @@ function ClueTimer({ deadline, serverNow }) {
   if (!deadline) return null;
   return <div className="clue-timer">{Math.ceil(remaining / 1000)}s</div>;
 }
+const formatBuzzTime = (milliseconds) => `${(Math.max(0, milliseconds || 0) / 1000).toFixed(3)}s`;
 function Display({ game, host = false, onAction }) {
   const q = game.activeQuestion?.question;
   const buzzed = game.players.find((p) => p.id === game.buzzedPlayer);
@@ -340,7 +341,7 @@ function Display({ game, host = false, onAction }) {
           </p>
           <h1>{game.activeQuestion.dailyDouble && !game.activeQuestion.dailyReady ? "Wager required" : q.question}</h1>
           {game.reveal && <div className="answer">{q.answer}</div>}
-          {buzzed && <div className="buzzed">{buzzed.name} buzzed in</div>}
+          {buzzed && <div className="buzzed">{buzzed.name} has buzzed in at {formatBuzzTime(game.buzzedAtMs)}</div>}
         </div>
       ) : game.status === "final" ? (
         <div className="clue-screen">
@@ -580,7 +581,14 @@ function Player({ game, playerId }) {
     chooser = game.players.find((p) => p.id === game.turnPlayerId),
     lockedOut = game.incorrectPlayerIds?.includes(playerId);
   const signal = game.lastEvent?.playerId === playerId ? game.lastEvent.type : "";
+  const [showPersonalBuzzTime, setShowPersonalBuzzTime] = useState(false);
   useClueMusic(game.buzzerOpen || game.status === "final");
+  useEffect(() => {
+    if (game.buzzedPlayer !== playerId || game.buzzedAtMs == null) { setShowPersonalBuzzTime(false); return; }
+    setShowPersonalBuzzTime(true);
+    const timeout = setTimeout(() => setShowPersonalBuzzTime(false), 5000);
+    return () => clearTimeout(timeout);
+  }, [game.buzzedPlayer, game.buzzedAtMs, playerId]);
   useEffect(() => { if(signal === "correct") tone(880,.28); if(signal === "incorrect") tone(150,.35); if(signal === "daily") playDailyDouble(); if(game.lastEvent?.type === "reveal") tone(1047,.55,"sine",.16); }, [game.lastEvent?.at]);
   return (
     <main className={`player ${signal === "correct" ? "signal-correct" : signal === "incorrect" ? "signal-incorrect" : ""}`}>
@@ -603,7 +611,9 @@ function Player({ game, playerId }) {
             {lockedOut
               ? "Incorrect — wait for the next clue."
               : buzzed
-                  ? buzzed.id === playerId ? "You buzzed first — answer now!" : `${buzzed.name} buzzed first.`
+                  ? buzzed.id === playerId
+                    ? showPersonalBuzzTime ? `You buzzed in at ${formatBuzzTime(game.buzzedAtMs)}.` : "Waiting for the host to open buzzers."
+                    : `${buzzed.name} has buzzed in at ${formatBuzzTime(game.buzzedAtMs)}.`
                   : game.buzzerOpen
                     ? "Buzz in!"
                     : "Wait for the host to open buzzers."}
