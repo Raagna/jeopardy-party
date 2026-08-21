@@ -341,7 +341,7 @@ function Display({ game, host = false, onAction }) {
           </p>
           <h1>{game.activeQuestion.dailyDouble && !game.activeQuestion.dailyReady ? "Wager required" : q.question}</h1>
           {game.reveal && <div className="answer">{q.answer}</div>}
-          {buzzed && <div className="buzzed">{buzzed.name} has buzzed in at {formatBuzzTime(game.buzzedAtMs)}</div>}
+          {buzzed && <div className="buzzed">{game.activeQuestion.dailyDouble ? `${buzzed.name} buzzed in` : `${buzzed.name} has buzzed in at ${formatBuzzTime(game.buzzedAtMs)}`}</div>}
         </div>
       ) : game.status === "final" ? (
         <div className="clue-screen">
@@ -475,12 +475,13 @@ function Controller({ game, onAction }) {
             <span>Correct response</span>
             {game.activeQuestion.question.answer}
           </div>
-          {!game.activeQuestion.dailyDouble && <button
+          <button
             className={"wide " + (game.buzzerOpen ? "on" : "")}
+            disabled={game.activeQuestion.dailyDouble && !game.activeQuestion.dailyReady}
             onClick={() => onAction("buzzer", { open: !game.buzzerOpen })}
           >
-            {game.buzzerOpen ? "BUZZERS OPEN — close" : "Open buzzers"}
-          </button>}
+            {game.buzzerOpen ? "BUZZERS OPEN — close" : game.activeQuestion.dailyDouble ? "Open Daily Double buzzer" : "Open buzzers"}
+          </button>
           {buzzed && (
             <div className="judgement">
               <h2>{buzzed.name}</h2>
@@ -571,7 +572,7 @@ function FinalPlayer({ game, playerId, p }) {
 }
 function DailyWager({ game, playerId, player }) {
   const [wager,setWager]=useState("5"); const max=Math.max(player.score,game.boardIndex===0?1000:2000,5)
-  if(game.activeQuestion.dailyReady) return <><p className="locked-final">Your wager is locked: ${game.activeQuestion.dailyWager}</p><button className="buzzer ready" disabled={!!game.buzzedPlayer} onClick={()=>socket.emit("player:buzz",{code:game.code,playerId})}>BUZZ!</button></>
+  if(game.activeQuestion.dailyReady) return <><p className="locked-final">Your wager is locked: ${game.activeQuestion.dailyWager}</p><p className="player-status">{game.buzzedPlayer ? "You buzzed in." : game.buzzerOpen ? "Buzz in!" : "Waiting for the host to open your buzzer."}</p><button className={"buzzer " + (game.buzzerOpen ? "ready" : "")} disabled={!!game.buzzedPlayer || !game.buzzerOpen} onClick={()=>socket.emit("player:buzz",{code:game.code,playerId})}>BUZZ!</button></>
   return <div className="final-form"><p>DAILY DOUBLE! Wager $5 to ${max}</p><input type="number" min="5" max={max} value={wager} onChange={e=>setWager(e.target.value)}/><button className="primary" onClick={()=>socket.emit("player:dailyWager",{code:game.code,playerId,wager})}>Lock wager</button></div>
 }
 function Player({ game, playerId }) {
@@ -581,14 +582,16 @@ function Player({ game, playerId }) {
     chooser = game.players.find((p) => p.id === game.turnPlayerId),
     lockedOut = game.incorrectPlayerIds?.includes(playerId);
   const signal = game.lastEvent?.playerId === playerId ? game.lastEvent.type : "";
+  const personalBuzzTime = game.buzzTimes?.[playerId];
+  const canRecordBuzz = !game.activeQuestion?.dailyDouble && game.buzzInputDeadline > game.serverNow && personalBuzzTime == null && !lockedOut;
   const [showPersonalBuzzTime, setShowPersonalBuzzTime] = useState(false);
   useClueMusic(game.buzzerOpen || game.status === "final");
   useEffect(() => {
-    if (game.buzzedPlayer !== playerId || game.buzzedAtMs == null) { setShowPersonalBuzzTime(false); return; }
+    if (personalBuzzTime == null) { setShowPersonalBuzzTime(false); return; }
     setShowPersonalBuzzTime(true);
     const timeout = setTimeout(() => setShowPersonalBuzzTime(false), 5000);
     return () => clearTimeout(timeout);
-  }, [game.buzzedPlayer, game.buzzedAtMs, playerId]);
+  }, [personalBuzzTime]);
   useEffect(() => { if(signal === "correct") tone(880,.28); if(signal === "incorrect") tone(150,.35); if(signal === "daily") playDailyDouble(); if(game.lastEvent?.type === "reveal") tone(1047,.55,"sine",.16); }, [game.lastEvent?.at]);
   return (
     <main className={`player ${signal === "correct" ? "signal-correct" : signal === "incorrect" ? "signal-incorrect" : ""}`}>
@@ -608,11 +611,13 @@ function Player({ game, playerId }) {
       ) : (
         <>
           <p className="player-status">
-            {lockedOut
+            {showPersonalBuzzTime
+              ? `You buzzed in at ${formatBuzzTime(personalBuzzTime)}.`
+              : lockedOut
               ? "Incorrect — wait for the next clue."
               : buzzed
                   ? buzzed.id === playerId
-                    ? showPersonalBuzzTime ? `You buzzed in at ${formatBuzzTime(game.buzzedAtMs)}.` : "Waiting for the host to open buzzers."
+                    ? "Waiting for the host to open buzzers."
                     : `${buzzed.name} has buzzed in at ${formatBuzzTime(game.buzzedAtMs)}.`
                   : game.buzzerOpen
                     ? "Buzz in!"
@@ -620,7 +625,7 @@ function Player({ game, playerId }) {
           </p>
           <button
             className={"buzzer " + (game.buzzerOpen ? "ready" : "")}
-            disabled={lockedOut || !!game.buzzedPlayer || !game.buzzerOpen}
+            disabled={lockedOut || (!game.buzzerOpen && !canRecordBuzz)}
             onClick={() => { tone(420,.1,"square"); socket.emit("player:buzz", { code: game.code, playerId }); }}
           >
             BUZZ!
