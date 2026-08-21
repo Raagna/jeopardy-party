@@ -304,6 +304,7 @@ function ClueTimer({ deadline, serverNow }) {
 function Display({ game, host = false, onAction }) {
   const q = game.activeQuestion?.question;
   const buzzed = game.players.find((p) => p.id === game.buzzedPlayer);
+  const chooser = game.players.find((p) => p.id === game.turnPlayerId);
   const boardDone = game.board?.every((c) => c.questions.every((q) => q.used));
   useClueMusic(Boolean(game.activeQuestion && game.buzzerOpen));
   useEffect(() => {
@@ -373,6 +374,7 @@ function Display({ game, host = false, onAction }) {
               </div>
             ))}
           </div>
+          {chooser && <p className="turn-note board-turn">It’s {chooser.name}’s turn to select a clue.</p>}
           {host && (
             <div className="host-bottom">
               {boardDone && (
@@ -505,8 +507,8 @@ function Controller({ game, onAction }) {
               </div>
             </div>
           )}
-          <button className="close" onClick={() => onAction("close")}>
-            Close clue / return to board
+          <button className="close" onClick={() => onAction("timeoutClue")}>
+            Reveal answer / return to board
           </button>
         </>
       ) : (
@@ -589,6 +591,10 @@ function Player({ game, playerId }) {
         <p>Waiting for the host to start…</p>
       ) : game.status === "final" ? (
         <FinalPlayer game={game} playerId={playerId} p={p} />
+      ) : !game.activeQuestion ? (
+        <p className="player-status">
+          {chooser ? (chooser.id === playerId ? "It’s your turn to select a clue." : `It’s ${chooser.name}’s turn to select a clue.`) : "Waiting for the first turn…"}
+        </p>
       ) : game.activeQuestion?.dailyDouble ? (
         game.activeQuestion.dailyPlayerId===playerId ? <DailyWager game={game} playerId={playerId} player={p}/> : <p className="player-status">A Daily Double is in play.</p>
       ) : (
