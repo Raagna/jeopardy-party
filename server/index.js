@@ -109,8 +109,9 @@ io.on('connection', (socket) => {
       } else if (p && amount < 0 && game.status === 'playing' && game.activeQuestion && !game.activeQuestion.final) {
         if (game.activeQuestion.dailyDouble) { game.turnPlayerId=p.id; revealThenReturn(game); return }
         if (!game.incorrectPlayerIds.includes(p.id)) game.incorrectPlayerIds.push(p.id)
-        clearTimeout((gameTimers.get(game.code)||{}).answer); game.lastEvent={type:'incorrect',playerId:p.id,at:Date.now()}; game.answeringPlayerId=null; game.buzzedPlayer=null; game.answerDeadline=null; game.buzzerOpen=false
+        clearTimeout((gameTimers.get(game.code)||{}).answer); game.lastEvent={type:'incorrect',playerId:p.id,at:Date.now()}; game.answeringPlayerId=null; game.buzzedPlayer=null; game.answerDeadline=null
         if (game.incorrectPlayerIds.length >= connectedPlayers(game).length) { revealThenReturn(game,'reveal',true); return }
+        const remaining=game.cluePausedRemaining ?? 45000; game.clueDeadline=Date.now()+remaining; game.cluePausedRemaining=null; game.buzzerOpen=true; schedule(game,'clue',remaining,()=>revealThenReturn(game,'reveal',true))
       }
     }
     if (action === 'close') {
